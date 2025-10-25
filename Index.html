@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Battery Finder – Live (Embedded CSV, No Upload)</title>
+<style>
+:root{ --brand-primary:#0ea5e9; --brand-text:#0f172a; --brand-muted:#64748b; --surface:#ffffff; --surface-2:#f8fafc; --ring:#38bdf8; }
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;background:var(--surface-2);color:var(--brand-text)}
+.container{max-width:1100px;margin:16px auto;padding:0 12px}
+.header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.title{font-weight:700;font-size:18px;color:var(--brand-primary)}
+.card{background:var(--surface);border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:12px;margin:10px 0}
+.row{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;align-items:center}
+.small{font-size:12px;color:var(--brand-muted)} .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+.input, select{width:100%;border:1px solid #d1d5db;border-radius:12px;padding:8px 10px;outline:none;background:#fff}
+.input:focus, select:focus{border-color:var(--ring);box-shadow:0 0 0 2px rgba(56,189,248,.3)}
+.res-card{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff}
+.grid{display:grid;gap:10px}
+.badge{display:inline-flex;align-items:center;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;font-size:10px;color:#475569}
+.controls{position:sticky;top:0;background:rgba(255,255,255,.8);backdrop-filter:blur(6px);border:1px solid #e2e8f0;border-radius:16px;padding:10px;z-index:10}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="title">Battery Finder</div>
+    <div id="meta" class="small" style="margin-left:auto"></div>
+  </div>
+
+  <div class="card controls">
+    <div class="row">
+      <div style="grid-column: span 3"><div class="small" style="margin-bottom:6px">Make</div><select id="make"></select></div>
+      <div style="grid-column: span 3"><div class="small" style="margin-bottom:6px">Model</div><select id="model"></select></div>
+      <div style="grid-column: span 2"><div class="small" style="margin-bottom:6px">Series</div><select id="series"></select></div>
+      <div style="grid-column: span 2"><div class="small" style="margin-bottom:6px">Year</div><select id="year"></select></div>
+      <div style="grid-column: span 2"><div class="small" style="margin-bottom:6px">Engine/Trim</div><select id="engine"></select></div>
+      <div style="grid-column: span 12"><div class="small" style="margin-bottom:6px">Smart search</div><input id="q" class="input" placeholder="Type to filter (make/model/series/chassis/engine/notes/year)"/></div>
+    </div>
+  </div>
+
+  <div id="hint" class="small">Loaded embedded data.</div>
+  <div id="results" class="grid"></div>
+</div>
+
+<script>
+const EMBEDDED_CSV = `Make,Model,Series,Chassis/Gen,Year_From,Year_To,Engine/Trim,Fuel,StopStart,Neuton_Code,Polarity/Layout,Terminal_Type,Confidence,Verify_Flag,Verify_Notes,Notes
+Alfa Romeo,Giulietta,940,Compact,2010,2020,1.4T/2.0JTD,Mixed,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Alfa Romeo,Stelvio,949,Giorgio,2017,2025,2.0T/2.2D,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Audi,A3 (8V),8V,MQB,2013,2020,1.4/1.8/2.0,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Audi,A4 (B9),B9,MLB Evo,2016,2025,2.0T/3.0T,Petrol/Diesel,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3 (some LN4)
+BMW,1 Series (F20),F20,RWD,2011,2019,116i–125i,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+BMW,3 Series (F30),F30,RWD,2012,2019,318i–340i/320d,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Citroën,C4 Picasso/SpaceTourer,B78/K9,EMP2,2013,2025,1.6/2.0HDi,Diesel,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+DS Automobiles,DS7 Crossback,X74,EMP2,2018,2025,1.6T/Hybrid,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Fiat,500,312,Mini,2007,2025,0.9/1.2/1.4,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Fiat,Ducato,X250/X290,Sevel,2006,2025,2.3D/3.0D,Diesel,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4/LN5 region
+Ford,Escape,ZN/ZY,C520,2013,2020,1.5T/2.0T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Ford,Everest,U704,U704,2022,2025,2.0BiT/3.0V6,Diesel,N,N70ZZLMF,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Main crank battery
+Ford,Falcon,FG/FGX,E8,2008,2016,I6/V8,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3 common on late ISS
+Ford,Focus,Mk4,C2,2019,2025,1.5T/2.3,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN2
+Ford,Mondeo,MC/MD,CD391,2015,2019,2.0T/2.0D,Petrol/Diesel,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+Ford,Ranger,PX/PX2/PX3,T6,2012,2025,3.2D/2.0BiT,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Main crank battery
+Ford,Ranger,T6 (Next-Gen),P703,2022,2025,2.0BiT/3.0V6,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Main crank battery
+Ford,Territory,SZ,E265,2011,2016,I6/2.7D,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+GWM Haval,H6,P71,P71,2021,2025,2.0T/Hybrid,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+Holden,Astra,BK/BL,D2XX,2016,2020,1.4T/1.6T,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+Holden,Barina,TM,Gamma II,2011,2018,1.6,Petrol,N,K46B24R,JIS R,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Small case
+Holden,Captiva,CG,Theta,2006,2018,2.4/3.2/2.0D,Mixed,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS on later; some LN3
+Holden,Colorado,RG,GMT700,2012,2020,2.8D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,4x4 diesel
+Holden,Commodore,ZB,E2XX,2018,2020,2.0T/V6,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro spec
+Holden,Trax,TJ,Gamma II,2013,2020,1.4T/1.8,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Honda,Accord,CU/CR/CR2/CV3,CU/CR/CV3,2008,2025,2.4/3.5,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3 on ISS
+Honda,CR-V,RW/RT,RW/RT,2017,2025,2.0/1.5T/1.6D,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN3
+Honda,Civic,FK/FC/FE,FK/FC/FE,2016,2025,1.8/1.5T/2.0,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN2 on ISS
+Honda,HR-V,RU/RV,RU/RV,2015,2025,1.8/1.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Some markets use LN2—verify
+Honda,Jazz,GE/GK/GE,GE/GK/GE,2008,2020,1.3/1.5,Petrol,N,K46B24L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Small case (L)
+Hyundai,Accent,RB,RB,2011,2019,1.6,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small case
+Hyundai,Elantra,MD/AD/CN7,MD/AD/CN7,2011,2025,1.8/2.0,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB on later
+Hyundai,Kona,OS/SX2,OS/SX2,2017,2025,2.0/1.6T/Hybrid,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Hyundai,Sonata,LF/DN8,LF/DN8,2014,2025,2.0T/2.5,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro LN3 on some trims
+Hyundai,Tucson,NX4,NX4,2020,2025,2.0/1.6T/2.0D,Petrol/Diesel,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Hyundai,i30,FD,FD,2007,2012,1.6/2.0,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Common D23L non-ISS
+Hyundai,i30,PD,PD,2017,2025,2.0/1.6T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Hyundai,iLoad,TQ,TQ,2008,2021,2.5D,Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Commercial
+Hyundai,iMax,TQ,TQ,2008,2021,2.5D,Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Commercial
+Isuzu,D-Max,RT50/RT85,TF,2012,2025,3.0D/1.9D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,4x4 duty
+Jaguar,XE,X760,iQ[Al],2015,2025,2.0T/3.0,Petrol,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4
+Jeep,Compass,MP,Small-Wide 4x4,2017,2025,2.4/2.0D,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN3
+Jeep,Grand Cherokee,WK2/WL,WK2/WL,2011,2025,3.6/5.7/3.0D,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN4
+Jeep,Wrangler,JK/JL,JK/JL,2007,2025,3.6/2.0T/2.2D,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM main; aux battery present on ISS
+Kia,Carnival,YP/KA4,YP/KA4,2015,2025,3.3/2.2D,Petrol/Diesel,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Varies by trim; check D31 on some
+Kia,Cerato,BD,BD,2018,2025,2.0/1.6T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Kia,Cerato,TD/YD/BD,TD/YD/BD,2009,2025,1.8/2.0,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB on later gens
+Kia,Picanto,JA,JA,2017,2025,1.2,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small case
+Kia,Seltos,SP2,SP2,2019,2025,2.0/1.6T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Kia,Sorento,MQ4,MQ4,2020,2025,2.2D/3.5/Hybrid,Mixed,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; check D26/D31 on some
+Kia,Sportage,NQ5,NQ5,2021,2025,2.0/1.6T/2.0D,Petrol/Diesel,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+LDV,T60,SK8C,T60,2017,2025,2.8D/2.0D,Diesel,N,N70ZZLMF,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,4x4 duty
+Land Rover,Discovery Sport,L550,LR-MS,2015,2025,2.0 Si4/TD4,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4
+Land Rover,Range Rover Evoque,L538/L551,LR-MS,2011,2025,2.0 Si4/TD4,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Lexus,IS,XE30,N,2013,2020,2.0T/2.5H/3.5,Mixed,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB on many variants
+Lexus,NX,AZ10/AZ20,GA-K,2014,2025,2.0T/2.5H,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN3 on newer
+Lexus,RX,AL20/AL30,GA-K,2015,2025,3.5/2.5H,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,AGM LN3
+Mazda,BT-50,TFS40,TFS40,2020,2025,3.0D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Shared with D-Max
+Mazda,CX-30,DM,DM,2019,2025,2.0/2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mazda,CX-3,DK,DK,2015,2025,2.0,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mazda,CX-5 2.0/2.5 (ISS),KE,KE,2012,2025,2.0 / 2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Petrol Stop-Start.
+Mazda,CX-5 2.2D (ISS),KF,KF,2017,2025,2.2D,Diesel,Y,,,,,review,Pattern atypical: review,Diesel Stop-Start.
+Mazda,CX-5 2.2DTT (ISS),KE,KE,2012,2017,2.2DTT,Diesel,Y,KEFB95D31L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Diesel Stop-Start.
+Mazda,CX-7,ER,ER,2006,2012,2.3T/2.2D,Mixed,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS (some D31 on diesel)
+Mazda,CX-8 (ISS),—,—,2018,2025,2.2DT,Diesel,Y,KEFB95D31L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Diesel Stop-Start.
+Mazda,CX-9 (ISS),TC,TC,2016,2025,2.5T,Petrol,Y,KEFB55D23L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Stop-Start (EFB).
+Mazda,CX-9,TB,TB,2007,2015,3.7i,Petrol,N,,,,,review,Pattern atypical: review,—
+Mazda,CX-9,TC,TC,2016,2025,2.5T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mazda,Mazda 2,DJ (Genki/Maxx),DJ,2014,2025,,Petrol,Y,KEFB55D23L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Stop-Start (EFB).
+Mazda,Mazda 2,DJ (Neo),DJ,2014,2025,,Petrol,N,K55D23L,JIS L,Top Post,Low,ready,Non-ISS with flooded/JIS: OK,Non-ISS variants.
+Mazda,Mazda 2,DJ,DJ,2014,2025,1.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS on many
+Mazda,Mazda 2,DY,DY,2002,2005,,Petrol,N,,,,,review,Pattern atypical: review,Baseline fitment for early Mazda2.
+Mazda,Mazda 3 2.0/2.5 SkyActiv (ISS),BL II / BM / BN,BL II/BM/BN,2011,2025,,Petrol,Y,KEFB55D23L,JIS L,Top Post,Medium,ready,ISS with EFB/AGM: OK,Stop-Start (EFB).
+Mazda,Mazda 3 2.3T MPS,BK - BL II,BK/BL II,2006,2013,,Petrol Turbo,N,K55D23L,JIS L,Top Post,Low,ready,Non-ISS with flooded/JIS: OK,MPS performance model.
+Mazda,Mazda 3 Diesel,BK - BL II,BK/BL II,2007,2013,2.0DT / 2.2DT,Diesel,N,,,,,review,Pattern atypical: review,Diesel variants.
+Mazda,Mazda 3 XD Astina (ISS),BM,BM,2014,2025,2.2DT,Diesel,Y,,,,,review,Pattern atypical: review,Stop-Start (EFB).
+Mazda,Mazda 3,BK - BL,BK/BL,2003,2011,,Petrol,N,K55D23L,JIS L,Top Post,Low,ready,Non-ISS with flooded/JIS: OK,General petrol variants.
+Mazda,Mazda 3,BM/BN,BM/BN,2013,2018,2.0/2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mazda,Mazda 3,BP,BP,2019,2025,2.0/2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mazda,Mazda 6,GH,GH,2008,2012,2.5/2.2D,Petrol/Diesel,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS (varies)
+Mazda,Mazda 6,GJ/GL,GJ/GL,2012,2025,2.5/2.2D,Petrol/Diesel,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; D31 on some diesels
+Mercedes-Benz,C-Class (W205),W205,MRA,2014,2021,C180–C300/C220d,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Mercedes-Benz,E-Class (W213),W213,MRA,2016,2025,E200–E400,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4
+Mini,Cooper/One,R56,UKL,2006,2014,1.6,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Mini,Cooper,F56,UKL2,2014,2025,1.5/2.0,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Mitsubishi,ASX,GA,GA,2010,2025,2.0,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Mitsubishi,Lancer,CJ/CF,CJ/CF,2007,2017,2.0/2.4,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Mitsubishi,Outlander,GF/ZM,GF/ZM,2012,2025,2.0/2.4/2.2D/PHEV,Mixed,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; PHEV aux 12V
+Mitsubishi,Pajero Sport,QE/QF/QG,QE/QF/QG,2015,2025,2.4D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,4x4 duty
+Mitsubishi,Pajero,NT–NX,V80,2006,2021,3.2D/3.8,Mixed,N,N70ZLMF,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Many configs; check dual
+Mitsubishi,Triton,MN/MQ/MR,L200,2009,2025,2.5D/2.4D,Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Tradie fitment; N70ZZL on heavy-duty
+Nissan,Juke,F15,B-Platform,2013,2019,1.6T,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Nissan,Micra,K13,K13,2011,2017,1.2,Petrol,N,K46B24R,JIS R,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Small case
+Nissan,Navara,D23 (NP300),D23,2015,2025,2.3D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Often heavy duty N70ZZL
+Nissan,Patrol,Y62,Y62,2013,2025,5.6 V8,Petrol,N,N70ZZLMF,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Check dual setups/accessories
+Nissan,Pulsar,B17,B17,2013,2017,1.8,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Nissan,Qashqai,J12,CMF,2022,2025,1.3T,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+Nissan,X-Trail,T33,CMF,2023,2025,2.5/Hybrid,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK,Euro AGM LN3
+Opel,Astra (PJ Holden),PJ,Delta II,2012,2013,1.4T/1.6,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Opel,Insignia (ZB Commodore),E2XX,E2XX,2018,2020,2.0T/V6,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Peugeot,3008/5008,P84/P87,EMP2,2017,2025,1.6T/2.0HDi,Mixed,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Peugeot,308,T7/T9,PF2/EMP2,2007,2025,1.6/2.0HDi,Mixed,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,Euro AGM LN2
+Renault,Clio,IV/V,B,2012,2025,0.9/1.2/1.0T,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Renault,Koleos,H45/HZG,D-platform,2008,2025,2.5/2.0D,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,Euro AGM LN3
+Renault,Megane,III/IV,C/D,2008,2025,1.6/1.2T/1.5dCi,Mixed,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Skoda,Fabia,NJ,PQ26,2014,2025,1.0/1.2TSI,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Skoda,Kodiaq,NS,MQB,2017,2025,2.0/2.0TDI,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Skoda,Octavia,A5/A7/NX,PQ35/MQB,2004,2025,1.4TSI/1.8/2.0TDI,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3 common
+Subaru,Forester,SK,SK,2018,2025,2.5/Hybrid,Mixed,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB (Hybrid aux)
+Subaru,Liberty/Legacy,BM/BR/BN/BS,BM/BR/BN/BS,2009,2020,2.5/3.6,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB on later
+Subaru,WRX,VA/VB,VA/VB,2014,2025,2.0T/2.4T,Petrol,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS (varies by market)
+Subaru,XV,GP/GT,GP/GT,2012,2025,2.0,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Suzuki,Swift,FZ/AZ,FZ/AZ,2011,2025,1.4/1.2,Petrol,N,K46B24L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Small case (verify L/R)
+Toyota,86,ZN6,ZN6,2012,2021,2.0,Petrol,N,K46B24R,JIS R,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small B24R; sports layout.
+Toyota,Aurion,GSV40,XV40,2006,2012,3.5,Petrol,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Aurion,XV40,XV40,2006,2012,3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,Avensis Verso,ACM20,ACM20,2001,2009,2.4,Petrol,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,C-HR,AX10 facelift,AX10,2020,2025,1.2T/2.0/1.8H,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB.
+Toyota,C-HR,AX10,AX10,2016,2025,1.2T/1.8H/2.0,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Toyota,C-HR,NGX10/ZYX10,AX10,2016,2020,1.2T/1.8H,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; Hybrid aux 12V.
+Toyota,Camry,ACV36,XV30,2002,2006,2.4,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Camry,ACV40/GSV40,XV40,2006,2011,2.4/3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Camry,ASV50/AVV50,XV50,2011,2017,2.5/Hybrid,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS on later years; hybrids use aux 12V.
+Toyota,Camry,ASV70/AXVH70,XV70,2018,2025,2.5/3.5/Hybrid,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB across range; Hybrid aux 12V.
+Toyota,Camry,XV30,XV30,2002,2006,2.4,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Camry,XV40,XV40,2006,2011,2.4/3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,Camry,XV50,XV50,2011,2017,2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB.
+Toyota,Camry,XV50,XV50,2011,2017,2.5/Hybrid,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Toyota,Camry,XV70,XV70,2018,2025,2.5/3.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB.
+Toyota,Camry,XV70,XV70,2018,2025,2.5/3.5/Hybrid,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Toyota,Corolla Hybrid,ZWE186R,E170,2016,2018,1.8H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Aux 12V; ISS/EFB.
+Toyota,Corolla Seca,AE112R,AE112R,1999,2000,1.8i,Petrol,N,,,,,review,Pattern atypical: review,—
+Toyota,Corolla,AE112R,AE112R,1998,2001,1.8i,Petrol,N,K38B19L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Older small case B19L; verify polarity.
+Toyota,Corolla,E120,E120,2001,2007,1.8,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,Corolla,E120,E120,2001,2007,1.8i,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Corolla,E150,E150,2007,2012,1.8,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,Corolla,E150,E150,2007,2012,1.8i,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Corolla,E170/E180,E170/E180,2013,2018,1.8,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Toyota,Corolla,E210,E210,2018,2025,2.0 / 1.8H,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/Hybrid aux 12V
+Toyota,Corolla,MZEA12R/ZWE211R,E210,2018,2025,2.0 / 1.8H,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; hybrids have aux battery—verify location/spec.
+Toyota,Corolla,ZRE152/ZRE153,E140,2007,2012,1.8i,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Common D23L non-ISS.
+Toyota,Corolla,ZRE172/ZRE182,E170/E180,2013,2018,1.8i,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB on many trims; confirm.
+Toyota,Echo,XP10,XP10,1999,2005,1.3/1.5,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small case
+Toyota,GR86,ZN8,ZN8,2022,2025,2.4,Petrol,N,K46B24R,JIS R,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small B24R; confirm clamp.
+Toyota,HiAce,GDH300,H300,2019,2025,2.8DT,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Heavy duty; check dual battery options.
+Toyota,HiAce,H200,H200,2005,2019,2.7/3.0D,Petrol/Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Commercial
+Toyota,HiAce,H300,H300,2019,2025,2.8D,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Commercial
+Toyota,HiAce,KDH200/TRH200,H200,2005,2019,2.7/3.0DT,Petrol/Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Commercial duty; confirm terminal layout.
+Toyota,Hilux,GUN125/GUN126,AN120/AN130,2015,2025,2.8DT,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Heavy duty N70ZZL; verify cold climate needs.
+Toyota,Hilux,KUN26R,AN10/AN20,2005,2015,3.0DT,Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,4x4 diesel common N70ZL.
+Toyota,Hilux,N70 petrol,N70,2005,2015,4.0,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS petrol.
+Toyota,Hilux,N70,AN10/20,2005,2015,2.7/3.0D,Petrol/Diesel,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Common size
+Toyota,Hilux,N80 4x2,N80,2015,2025,2.7,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Base models.
+Toyota,Hilux,N80,AN120/130,2015,2025,2.8D/2.7,Diesel/Petrol,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Heavy duty
+Toyota,Hilux,TGN16R,AN10/AN20,2005,2015,2.7,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS petrol.
+Toyota,Kluger,AXUH78/AXUH70,XU70,2021,2025,2.5H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; Hybrid aux 12V.
+Toyota,Kluger,GSU40/ASU50,XU40/XU50,2007,2019,3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,Kluger,XU40/XU50,XU40/XU50,2007,2019,3.5,Petrol,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,LandCruiser 200,VDJ200/URJ200,J200,2007,2021,4.5DT/5.7,Diesel/Petrol,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Dual battery setups common; verify qty/fit.
+Toyota,LandCruiser 300,FJA300,J300,2021,2025,3.3DTT,Diesel,Y,N70ZZLMF,JIS L,Top Post,Medium,review,ISS but flooded/JIS suggested: review,ISS present; main battery size typically N70ZZL—confirm aux/AGM.
+Toyota,LandCruiser 70 Series,VDJ79,J70,2007,2025,4.5DTT,Diesel,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Often dual batteries; verify config
+Toyota,LandCruiser Prado,J120,J120,2003,2009,3.0D/4.0,Diesel/Petrol,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Common N70ZL
+Toyota,Prado,GDJ150/GRJ150,J150,2009,2023,2.8DT/4.0,Diesel/Petrol,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Heavy duty N70ZZL for diesel 4x4.
+Toyota,Prado,J150,J150,2009,2023,2.8D/4.0,Diesel/Petrol,N,N70ZZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,4x4 duty
+Toyota,Prado,KDJ120/GRJ120,J120,2003,2009,3.0DT/4.0,Diesel/Petrol,N,N70ZLMF,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Common N70ZL.
+Toyota,Prius,XW50,XW50,2016,2022,1.8H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Aux 12V
+Toyota,Prius,XW60,XW60,2023,2025,2.0H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Aux 12V.
+Toyota,Prius,ZVW30,XW30,2009,2015,1.8H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Aux 12V; confirm venting.
+Toyota,Prius,ZVW50,XW50,2016,2022,1.8H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,Aux 12V.
+Toyota,RAV4 Hybrid,AXAH52/AXAH54,XA50,2019,2025,2.5H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; Hybrid aux 12V.
+Toyota,RAV4,ACA33/ACA38,XA30,2006,2012,2.4/3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,RAV4,ASA44/ASA49,XA40,2013,2018,2.0/2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS on later years; confirm.
+Toyota,RAV4,MXAA52/MXAA54,XA50,2019,2025,2.0/2.5,Petrol,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB.
+Toyota,RAV4,XA20,XA20,2000,2005,2.0,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Older non-ISS.
+Toyota,RAV4,XA30,XA30,2006,2012,2.4,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS.
+Toyota,RAV4,XA30,XA30,2006,2012,2.4/3.5,Petrol,N,K55D23L,JIS L,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,RAV4,XA40,XA40,2013,2018,2.0/2.5/2.2D,Petrol/Diesel,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB
+Toyota,RAV4,XA50,XA50,2019,2025,2.0/2.5/2.5H,Petrol/Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB (Hybrid aux)
+Toyota,Tarago,XR50,XR50,2006,2019,2.4/3.5,Petrol,N,K55D23L,JIS L,Top Post,Medium,ready,Non-ISS with flooded/JIS: OK,Non-ISS
+Toyota,Yaris Hybrid,MXPH10,XP210,2020,2025,1.5H,Hybrid,Y,KEFB55D23L,JIS L,Top Post,High,ready,ISS with EFB/AGM: OK,ISS/EFB; small engine bay—confirm bracket.
+Toyota,Yaris,NCP130/NSP130,XP130,2011,2020,1.3/1.5,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,B19LS; some trims ISS later—verify.
+Toyota,Yaris,NCP90/NCP91,XP90,2005,2011,1.3/1.5,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small case B19LS.
+Toyota,Yaris,XP130,XP130,2011,2020,1.3/1.5,Petrol,N,K38B19LS,JIS,Top Post,High,ready,Non-ISS with flooded/JIS: OK,Small case
+Volkswagen,Amarok,2H,2H,2011,2022,2.0BiT/3.0V6,Diesel,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4/LN5 region
+Volkswagen,Caddy,2K/SA,A5,2004,2020,1.6/2.0TDI,Mixed,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Volkswagen,Golf Mk7,Mk7,MQB,2013,2020,1.4TSI/2.0,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Volkswagen,Polo,AW,MQB-A0,2018,2025,1.0TSI,Petrol,Y,VRL260,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN2
+Volkswagen,Tiguan,Mk2,MQB,2016,2025,1.4TSI/2.0/2.0TDI,Mixed,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Volvo,S60/V60,SPA,SPA,2019,2025,T5/T8,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4
+Volvo,XC40,CMA,CMA,2018,2025,T4/T5,Petrol,Y,VRL370,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN3
+Volvo,XC60,SPA,SPA,2017,2025,T5/T6/D4,Mixed,Y,VRL480,DIN (LN series),DIN recessed,High,ready,ISS with EFB/AGM: OK; Euro make with DIN AGM: OK,AGM LN4
+`;
+const REQUIRED = ["Make","Model","Series","Chassis/Gen","Year_From","Year_To","Engine/Trim","Fuel","StopStart","Neuton_Code","Polarity/Layout","Terminal_Type","Confidence","Verify_Flag","Verify_Notes","Notes"];
+let ROWS = [];
+const $ = (id)=>document.getElementById(id);
+
+function norm(s){ return (s||"").toString().trim(); }
+function unique(a){ return Array.from(new Set(a)); }
+function tokensOf(q){ return (q||'').toLowerCase().split(/[^a-z0-9\.\-]+/).map(t=>t.trim()).filter(Boolean); }
+
+function setOpts(sel, opts){
+  const v = sel.value;
+  sel.innerHTML = "<option value=''>All</option>"+opts.map(o=>`<option value="${o}">${o}</option>`).join("");
+  if(unique(opts).includes(v)) sel.value = v;
+}
+
+function currentFilters(){
+  return {
+    make: $("make").value,
+    model: $("model").value,
+    series: $("series").value,
+    year: $("year").value,
+    engine: $("engine").value,
+    qTokens: tokensOf($("q").value||"")
+  };
+}
+
+function filteredRows(){
+  const f = currentFilters();
+  let out = ROWS;
+  if(f.make) out = out.filter(r=>r.Make===f.make);
+  if(f.model) out = out.filter(r=>r.Model===f.model);
+  if(f.series) out = out.filter(r=>r.Series===f.series);
+  if(f.year){
+    const yr = parseInt(f.year,10);
+    out = out.filter(r=>{
+      const y1=parseInt(r.Year_From,10), y2=parseInt(r.Year_To,10);
+      if(isNaN(y1)||isNaN(y2)||isNaN(yr)) return true;
+      return yr>=y1 && yr<=y2;
+    });
+  }
+  if(f.engine) out = out.filter(r=>r["Engine/Trim"]===f.engine);
+  if(f.qTokens.length){
+    out = out.filter(r=>{
+      const hay = [r.Make,r.Model,r.Series,r["Chassis/Gen"]||"",r["Engine/Trim"],r.Fuel||"",r.Neuton_Code||"",r.Notes||"",r["Verify_Notes"]||"", `${r.Year_From}-${r.Year_To}`].join("␟").toLowerCase();
+      return f.qTokens.every(t=>hay.includes(t));
+    });
+  }
+  return out;
+}
+
+function renderSelectors(){
+  const f = currentFilters();
+  setOpts($("make"), unique(ROWS.map(r=>r.Make)).sort());
+  setOpts($("model"), unique(ROWS.filter(r=>!f.make || r.Make===f.make).map(r=>r.Model)).sort());
+  setOpts($("series"), unique(ROWS.filter(r=>(!f.make || r.Make===f.make)&&(!f.model||r.Model===f.model)).map(r=>r.Series)).sort());
+  const years = new Set();
+  ROWS.filter(r=>(!f.make || r.Make===f.make)&&(!f.model||r.Model===f.model)&&(!f.series||r.Series===f.series)).forEach(r=>{
+    const y1 = parseInt(r.Year_From,10), y2 = parseInt(r.Year_To,10);
+    if(!isNaN(y1)&&!isNaN(y2)){ for(let y=y1;y<=y2;y++) years.add(String(y)); }
+  });
+  setOpts($("year"), Array.from(years).sort((a,b)=>a-b));
+  setOpts($("engine"), unique(ROWS.filter(r=>(!f.make || r.Make===f.make)&&(!f.model||r.Model===f.model)&&(!f.series||r.Series===f.series)).map(r=>r["Engine/Trim"]).filter(Boolean)).sort());
+}
+
+function render(){
+  const out = filteredRows();
+  $("meta").textContent = `Showing ${out.length} matches`;
+  const host = $("results"); host.innerHTML = "";
+  out.slice(0,200).forEach(r=>{
+    const card = document.createElement('div'); card.className = 'res-card';
+    card.innerHTML = `
+      <div class="row">
+        <div style="grid-column: span 4"><strong>${r.Make} ${r.Model}</strong><div class="small">${r.Series}${r["Chassis/Gen"]? " • "+r["Chassis/Gen"]:""}</div></div>
+        <div style="grid-column: span 3">${r.Year_From}–${r.Year_To}<div class="small">${r["Engine/Trim"]} • ${r.Fuel||""}</div></div>
+        <div style="grid-column: span 3"><div class="small">Neuton Part</div><div class="mono">${r.Neuton_Code||"—"}</div></div>
+        <div style="grid-column: span 2" class="small">${r["Polarity/Layout"]||""}${r["Terminal_Type"]? " • "+r["Terminal_Type"]:""}<div class="small"><span class="badge">ISS: ${r.StopStart||""}</span> <span class="badge">Conf: ${r.Confidence||""}</span></div></div>
+      </div>`;
+    host.appendChild(card);
+  });
+}
+
+// wire up
+["make","model","series","year","engine"].forEach(id=>{ $(id).addEventListener("change", ()=>{ renderSelectors(); render(); }); });
+$("q").addEventListener("input", render);
+
+// autoload
+Papa.parse(EMBEDDED_CSV, {
+  header:true, skipEmptyLines:true, transformHeader: h=>h.trim(),
+  complete: (results)=>{
+    const fields = results.meta.fields||[];
+    const missing = REQUIRED.filter(c=>!fields.includes(c));
+    if(missing.length){ document.getElementById("hint").textContent = "Embedded CSV missing required columns: "+missing.join(", "); return; }
+    ROWS = (results.data||[]).map(r=>{ 
+      const c = {...r};
+      c["Year_From"] = (norm(c["Year_From"]).match(/\d{4}/)||[])[0] || c["Year_From"];
+      c["Year_To"] = norm(c["Year_To"]).replace(/^on$/i,"2025");
+      c["Year_To"] = (norm(c["Year_To"]).match(/\d{4}/)||[])[0] || c["Year_To"];
+      return c;
+    });
+    ["make","model","series","year","engine","q"].forEach(id=>$(id).value="");
+    renderSelectors(); render();
+  },
+  error: (err)=> { document.getElementById("hint").textContent = "Embedded CSV parse error: "+err.message; }
+});
+</script>
+</body>
+</html>
